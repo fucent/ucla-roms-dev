@@ -50,8 +50,9 @@
       gny = gny-2
 
       ! mask rho
-      allocate(msk(0:gnx+1,0:gny+1)); msk=1 
+      allocate(msk(0:gnx+1,0:gny+1)); msk=1
       call ncread(ncid,'mask_rho',msk)
+      call add_river_cells(ncid,msk)  ! subdomains with river cells are kept, as in partit
 
       ierr = nf90_close(ncid)
        if (ierr/=0) call handle_ierr(ierr,'closing: ',trim(adjustl(grdfile)))
@@ -78,14 +79,15 @@
       npx0 = max(npx1-7,1)
       npy0 = max(npy1-7,1)
 
-      allocate(active(1:56,1:3))
+      ! one row per candidate partition that fits in the available cores
+      allocate(active((npx1-npx0+1)*(npy1-npy0+1),1:3)); active = 0
       i = 0
       do npy = npy0,npy1
         do npx = npx0,npx1
           if ((npx*npy>=cores).and.(npx*npy<=cores/ocean)) then
             call check_mask(npx,npy,gnx,gny,msk,.false.)
-            i = i+1
             if (nparts<=cores) then
+              i = i+1
               active(i,1) = nparts
               active(i,2) = npx
               active(i,3) = npy
@@ -95,10 +97,16 @@
       enddo
 
 !     ierr = nf90_close(npid)
-                     
-      call sort(active)
 
-      do k = 1,10
+      if (i==0) then
+        print *,'No partition found with at most',int(cores),
+     &          ' active subdomains'
+        stop
+      endif
+
+      call sort(active(1:i,:))
+
+      do k = 1,min(i,10)
         print *,'---',int(active(k,2)),'x',int(active(k,3)),'---'
         print *,int(active(k,1)),'cores out of',int(cores),'used'
       enddo

@@ -96,6 +96,7 @@
       public :: cmd_args_ncjoin
       public :: partition_mask
       public :: check_mask
+      public :: add_river_cells
       public :: make_partial_files
       public :: write_partial_files
       public :: make_joined_file
@@ -438,6 +439,37 @@
 
       end subroutine check_mask !]
 ! ----------------------------------------------------------------------
+      subroutine add_river_cells(ncid,mask)   ![
+      ! Mark river cells (river_flux > 0 in the grid file) as wet in the mask
+      ! that decides which subdomains are kept. A river cell is a land cell
+      ! next to the coast; ROMS passes its flux to the ocean neighbour through
+      ! the halo of the subdomain that holds it. If that subdomain were all
+      ! land and skipped, the river would be lost. Only affects the choice of
+      ! subdomains, not the data written to the partial files.
+      ! (Rivers given as river_index/river_fraction in a river forcing file
+      ! are not seen here.)
+      implicit none
+
+      ! input/outputs
+      integer,                         intent(in)    :: ncid
+      real,dimension(0:gnx+1,0:gny+1), intent(inout) :: mask
+
+      ! local
+      real,dimension(:,:),allocatable :: rflx
+      integer :: ierr,varid
+
+      ierr = nf90_inq_varid(ncid,'river_flux',varid)
+      if (ierr/=nf90_noerr) return   ! no rivers in the grid file
+
+      allocate(rflx(0:gnx+1,0:gny+1)); rflx = 0
+      call ncread(ncid,'river_flux',rflx)
+      print *,'river cells: ',count(rflx>0),
+     &        ', on land (kept as active): ',count(rflx>0 .and. mask==0)
+      where (rflx>0) mask = 1
+      deallocate(rflx)
+
+      end subroutine add_river_cells !]
+! ----------------------------------------------------------------------
       subroutine partition_mask(npx,npy)   ![
       implicit none
 
@@ -474,6 +506,7 @@
 
       allocate(mask(0:gnx+1,0:gny+1))
       call ncread(ncid, 'mask_rho',mask)
+      call add_river_cells(ncid,mask)  ! keep subdomains that hold river cells
       ierr = nf90_close(ncid)
 
       ! Classic modes presence means all masks are set to 1 - cannot be ignored

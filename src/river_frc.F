@@ -10,6 +10,7 @@
 #include "cppdefs.opt"
 
       use dimensions
+      use roms_mpi                                                   ! exchange_xxx for river halos
       use roms_read_write
       use nc_read_write
       use scalars                                                    ! for FIRST_STEP
@@ -149,9 +150,12 @@
             call ncread(ncid, "river_index", ridx_real(i0:i1,j0:j1))
             call ncread(ncid, "river_fraction", rfrc(i0:i1,j0:j1))
             ierr = nf90_close(ncid)
+            ! Fill halos: a river cell in the neighbouring subdomain can flow
+            ! across the subdomain edge into this one (see calc_river_flux)
+            call exchange_xxx(ridx_real,rfrc)
 !     Check for non-integer values
-            ridx(i0:i1, j0:j1) = int(ridx_real(i0:i1, j0:j1))
-            if (any(abs(ridx_real(i0:i1,j0:j1) - ridx(i0:i1,j0:j1)) > 1.0e-6)) then
+            ridx = int(ridx_real)
+            if (any(abs(ridx_real - ridx) > 1.0e-6)) then
                write(*,*) 'ERROR: river_index contains non-integers!'
                stop
             endif
@@ -173,16 +177,21 @@
             else
                call ncread(ncid, riv_flx_name, rflx(i0:i1,j0:j1))
                ierr = nf90_close(ncid)
-               where (rflx(i0:i1, j0:j1) > 0)
-                  ridx(i0:i1, j0:j1) = floor(rflx(i0:i1, j0:j1) - 1e-5)
-                  rfrc(i0:i1,j0:j1) = rflx(i0:i1,j0:j1) - ridx(i0:i1,j0:j1)
+               ! Fill halos: a river cell in the neighbouring subdomain can flow
+               ! across the subdomain edge into this one (see calc_river_flux)
+               call exchange_xxx(rflx)
+               where (rflx > 0)
+                  ridx = floor(rflx - 1e-5)
+                  rfrc = rflx - ridx
                elsewhere
-                  ridx(i0:i1, j0:j1) = 0
-                  rfrc(i0:i1, j0:j1) = 0
+                  ridx = 0
+                  rfrc = 0
                end where
             end if ! found in grid file
          end if                 ! Separate variables found in forcing file
       endif !analytical
+
+      if (.not.analytical) call check_river_cells                    ! no river lost in partitioning
 
       call calc_river_flux                                           ! compute uflx,vflx from rflx
 
@@ -192,6 +201,48 @@
      &  'river_frc: init river locations'
 
       end subroutine init_river_frc  !]
+! ----------------------------------------------------------------------
+      subroutine check_river_cells  ![
+      ! The fractions of each river's cells add up to 1 over the whole grid.
+      ! Sum them over the interior of all subdomains: a river whose cells lie
+      ! in a land-only subdomain that partit skipped (land-masked partitions)
+      ! would otherwise vanish without any error.
+      use mpi
+      implicit none
+
+      ! local
+      real,dimension(nriv) :: frc_loc,frc_glb
+      integer :: i,j,ir,ierr
+      logical :: lost
+
+      frc_loc = 0.
+      do j = 1,ny
+        do i = 1,nx
+          if (rfrc(i,j) > 0 .and. ridx(i,j) >= 1 .and. ridx(i,j) <= nriv) then
+            frc_loc(ridx(i,j)) = frc_loc(ridx(i,j)) + rfrc(i,j)
+          endif
+        enddo
+      enddo
+      call MPI_Allreduce(frc_loc, frc_glb, nriv, MPI_DOUBLE_PRECISION,
+     &                   MPI_SUM, ocean_grid_comm, ierr)
+
+      lost = .false.
+      if (mynode == 0) then
+        do ir = 1,nriv
+          if (frc_glb(ir) < 1.e-6) then
+            write(*,'(7x,A,I4,A)') 'river_frc: ERROR: river ', ir,
+     &        ' has no grid cells (in a skipped land subdomain?)'
+            lost = .true.
+          elseif (abs(frc_glb(ir) - 1.) > 1.e-3) then
+            write(*,'(7x,A,I4,A,F8.5,A)') 'river_frc: WARNING: river ',
+     &        ir, ': cell fractions add up to ', frc_glb(ir), ', not 1'
+          endif
+        enddo
+      endif
+      call MPI_Bcast(lost, 1, MPI_LOGICAL, 0, ocean_grid_comm, ierr)
+      if (lost) error stop 'river_frc: river cells missing'
+
+      end subroutine check_river_cells  !]
 ! ----------------------------------------------------------------------
       subroutine calc_river_flux  ![
       ! calculate the river flux contributions to each cell.
