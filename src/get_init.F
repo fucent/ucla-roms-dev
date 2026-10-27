@@ -24,6 +24,11 @@
       use nc_read_write, only: handle_ierr, ncread
       use roms_read_write
       use dimensions
+#ifdef NHMG
+      use work_mod, only: work
+      use nhmg, only: iprec1, iprec2
+      use mg_grids, only: mggrid => grid
+#endif
 
       implicit none
 
@@ -32,6 +37,9 @@
      &           checkdims , itrc
       real    :: time_scale
       integer :: init_type
+#ifdef NHMG
+      logical :: nh_found
+#endif
       integer, parameter :: init_run=1,  rst_run=2
 #ifdef EXACT_RESTART
      &                    , apprx_rst=3, exact_rst=4
@@ -397,6 +405,55 @@ c--#define VERBOSE
          v(i0:i1,1:j1,k,tindx) = v(i0:i1,1:j1,k,tindx)*vmask(i0:i1,1:j1)
        enddo
       call exchange_xxx(v(:,:,:,tindx) )
+
+# ifdef NHMG
+! NH state written by wrt_restart_file (absent in initial files): w for
+! both records, AB2 trends and NH pressure from the latest one only.
+      ierr=nf90_inq_varid(ncid, 'w_nh', varid)
+      if (ierr == nf90_noerr) then
+        call ncread(ncid,'w_nh', w(i0:i1,j0:j1,0:nz,tindx),start)
+        call exchange_xxx(w(:,:,:,tindx))
+        if (tindx == 1) then
+          nh_found=.true.
+          ierr=nf90_inq_varid(ncid,'nhdu_new',varid)
+          if (ierr /= nf90_noerr) nh_found=.false.
+          ierr=nf90_inq_varid(ncid,'nhdu_old',varid)
+          if (ierr /= nf90_noerr) nh_found=.false.
+          ierr=nf90_inq_varid(ncid,'nhdv_new',varid)
+          if (ierr /= nf90_noerr) nh_found=.false.
+          ierr=nf90_inq_varid(ncid,'nhdv_old',varid)
+          if (ierr /= nf90_noerr) nh_found=.false.
+          ierr=nf90_inq_varid(ncid,'nhdw_new',varid)
+          if (ierr /= nf90_noerr) nh_found=.false.
+          ierr=nf90_inq_varid(ncid,'nhdw_old',varid)
+          if (ierr /= nf90_noerr) nh_found=.false.
+          ierr=nf90_inq_varid(ncid,'p_nh',varid)
+          if (ierr /= nf90_noerr) nh_found=.false.
+          if (nh_found) then
+            ! latest level -> slot 2, previous -> slot 1 (iprec2/iprec1)
+            call ncread(ncid,'nhdu_new',nhdu( 1:i1,j0:j1,:,2),start)
+            call ncread(ncid,'nhdu_old',nhdu( 1:i1,j0:j1,:,1),start)
+            call ncread(ncid,'nhdv_new',nhdv(i0:i1, 1:j1,:,2),start)
+            call ncread(ncid,'nhdv_old',nhdv(i0:i1, 1:j1,:,1),start)
+            call ncread(ncid,'nhdw_new',nhdw(i0:i1,j0:j1,0:nz,2),start)
+            call ncread(ncid,'nhdw_old',nhdw(i0:i1,j0:j1,0:nz,1),start)
+            iprec1=1 ; iprec2=2
+            call ncread(ncid,'p_nh',work(i0:i1,j0:j1,1:nz),start)
+            call exchange_xxx(work(:,:,1:nz))
+            do k=1,nz
+              do j=0,ny+1
+                do i=0,nx+1
+                  mggrid(1)%p(k,j,i)=work(i,j,k)
+                enddo
+              enddo
+            enddo
+            nh_rst_ok=.true.
+          endif
+          if (mynode == 0) write(*,'(1x,2A,L2)') 'get_init :: NHMG ',
+     &       'state (w,nhdu/v/w,p) read from restart:', nh_rst_ok
+        endif
+      endif
+# endif
 
 # if defined NHMG
       ! since ncdf_read already does an exchange to fill buffers, we're

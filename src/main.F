@@ -173,6 +173,15 @@
 #ifdef EXACT_RESTART
         call get_init(nrrec-1,2)
         call set_depth
+# ifdef NHMG
+        ! NHMG matrices from the n-1 state: that is what a continuous
+        ! run uses when the restart step follows a matrix refresh
+        ! (refresh at mod(iic,20)==0 in step). Kept below if the NH
+        ! state was restored and ntstart-1 is such a refresh step.
+        call nhmg_matrices(nx,ny,N,halo,padd_X,padd_E,dzdxi,dzdeta,Hz,
+     &                   dm_r(0:nx+1,0:ny+1),
+     &                   dn_r(0:nx+1,0:ny+1)    )
+# endif
 #endif
         call get_init(nrrec, 1)
 
@@ -197,9 +206,15 @@
 !  then set matrices coefficients for the elliptic problem
 !----------------------------------------------------------------------
 #ifdef NHMG
+# ifdef EXACT_RESTART
+      if (.not. (nh_rst_ok .and. mod(ntstart-1,20)==0)) then
+# endif
       call nhmg_matrices(nx,ny,N,halo,padd_X,padd_E,dzdxi,dzdeta,Hz,
      &                   dm_r(0:nx+1,0:ny+1),
      &                   dn_r(0:nx+1,0:ny+1)    )
+# ifdef EXACT_RESTART
+      endif
+# endif
 #endif
 
       call set_HUV

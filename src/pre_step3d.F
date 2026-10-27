@@ -402,7 +402,9 @@
 !======================================================================
 
 !     if (iic.lt.-10) then ! should never happen, so always project twice
-      if (iic.ge.(ntstart+2)) then ! Use AB2 extrapolation for the NH prsgrd
+      ! On a restart with the NH state read in (nh_rst_ok), the AB2
+      ! history is valid from the first step, as in a continuous run.
+      if (iic.ge.(ntstart+2) .or. nh_rst_ok) then ! Use AB2 extrapolation for the NH prsgrd
 !       if  (mynode==0) print *, 'AB2 extrapolate'
         do k=1,nz
           do j=1,ny

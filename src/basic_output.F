@@ -491,12 +491,16 @@
       use eos_vars
       use work_mod
       use grid
-      use tracers 
+      use tracers
       use coupling
 #ifdef MARBL
 !     add MARBL saved state to restart to restart file
       use marbl_driver, only: marbldrv_write_ss_vars_to_rst
-#endif       
+#endif
+#ifdef NHMG
+      use nhmg, only: iprec1, iprec2
+      use mg_grids, only: mggrid => grid
+#endif
       implicit none
 
       ! local
@@ -540,6 +544,26 @@
         start(3)=1; start(4)=rec_rst
         call ncwrite(ncid,vname(1,indxU),u( 1:i1,j0:j1,:,nnew),start)
         call ncwrite(ncid,vname(1,indxV),v(i0:i1, 1:j1,:,nnew),start)
+
+# ifdef NHMG
+! NH state for exact restart. After the corrector, nhd*(iprec2) is the
+! latest AB2 level and nhd*(iprec1) the previous one.
+        call ncwrite(ncid,'w_nh',    w(i0:i1,j0:j1,0:nz,nnew),start)
+        call ncwrite(ncid,'nhdu_new',nhdu( 1:i1,j0:j1,:,iprec2),start)
+        call ncwrite(ncid,'nhdu_old',nhdu( 1:i1,j0:j1,:,iprec1),start)
+        call ncwrite(ncid,'nhdv_new',nhdv(i0:i1, 1:j1,:,iprec2),start)
+        call ncwrite(ncid,'nhdv_old',nhdv(i0:i1, 1:j1,:,iprec1),start)
+        call ncwrite(ncid,'nhdw_new',nhdw(i0:i1,j0:j1,0:nz,iprec2),start)
+        call ncwrite(ncid,'nhdw_old',nhdw(i0:i1,j0:j1,0:nz,iprec1),start)
+        do k=1,nz
+          do j=0,ny+1
+            do i=0,nx+1
+              work(i,j,k)=mggrid(1)%p(k,j,i)
+            enddo
+          enddo
+        enddo
+        call ncwrite(ncid,'p_nh',work(i0:i1,j0:j1,1:nz),start)
+# endif
 
         call wrt_rst_trc(ncid,start)                              ! tracer variables
 
@@ -909,6 +933,49 @@
         ierr = nf90_put_att(ncid,varid,'long_name',
      &                               'south bc tuning coeff')
       endif
+
+# ifdef NHMG
+! Non-hydrostatic state needed for an exact NHMG restart: prognostic w,
+! the two AB2 levels of the NH pressure-gradient trends, and the NH
+! pressure (first guess of the next multigrid solve).
+      varid = nccreate(ncid,'w_nh',(/dn_xr,dn_yr,dn_zw,dn_tm/),
+     &                             (/xi_rho,eta_rho,N+1,0/),nf90_double)
+      ierr = nf90_put_att(ncid,varid,'long_name',
+     &                         'NHMG prognostic vertical velocity')
+      ierr = nf90_put_att(ncid,varid,'units','meter second-1')
+
+      varid = nccreate(ncid,'nhdu_new',(/dn_xu,dn_yr,dn_zr,dn_tm/),
+     &                                 (/xi_u,eta_rho,N,0/),nf90_double)
+      ierr = nf90_put_att(ncid,varid,'long_name',
+     &                         'NH u-trend, latest AB2 level')
+      varid = nccreate(ncid,'nhdu_old',(/dn_xu,dn_yr,dn_zr,dn_tm/),
+     &                                 (/xi_u,eta_rho,N,0/),nf90_double)
+      ierr = nf90_put_att(ncid,varid,'long_name',
+     &                         'NH u-trend, previous AB2 level')
+
+      varid = nccreate(ncid,'nhdv_new',(/dn_xr,dn_yv,dn_zr,dn_tm/),
+     &                                 (/xi_rho,eta_v,N,0/),nf90_double)
+      ierr = nf90_put_att(ncid,varid,'long_name',
+     &                         'NH v-trend, latest AB2 level')
+      varid = nccreate(ncid,'nhdv_old',(/dn_xr,dn_yv,dn_zr,dn_tm/),
+     &                                 (/xi_rho,eta_v,N,0/),nf90_double)
+      ierr = nf90_put_att(ncid,varid,'long_name',
+     &                         'NH v-trend, previous AB2 level')
+
+      varid = nccreate(ncid,'nhdw_new',(/dn_xr,dn_yr,dn_zw,dn_tm/),
+     &                             (/xi_rho,eta_rho,N+1,0/),nf90_double)
+      ierr = nf90_put_att(ncid,varid,'long_name',
+     &                         'NH w-trend, latest AB2 level')
+      varid = nccreate(ncid,'nhdw_old',(/dn_xr,dn_yr,dn_zw,dn_tm/),
+     &                             (/xi_rho,eta_rho,N+1,0/),nf90_double)
+      ierr = nf90_put_att(ncid,varid,'long_name',
+     &                         'NH w-trend, previous AB2 level')
+
+      varid = nccreate(ncid,'p_nh',(/dn_xr,dn_yr,dn_zr,dn_tm/),
+     &                             (/xi_rho,eta_rho,N,0/),nf90_double)
+      ierr = nf90_put_att(ncid,varid,'long_name',
+     &                         'NHMG non-hydrostatic pressure')
+# endif
 
 #endif /* SOLVE3D */
 

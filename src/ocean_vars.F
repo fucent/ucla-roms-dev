@@ -36,6 +36,7 @@
       real,public,allocatable,dimension(:,:,:,:) :: nhdu
       real,public,allocatable,dimension(:,:,:,:) :: nhdv
       real,public,allocatable,dimension(:,:,:,:) :: nhdw
+      logical,public :: nh_rst_ok = .false.  ! NH state (w, nhd*, p) read from restart
 
       real,public,allocatable,dimension(:,:,:) :: FlxU
       real,public,allocatable,dimension(:,:,:) :: FlxV
